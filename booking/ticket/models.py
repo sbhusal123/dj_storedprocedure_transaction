@@ -8,6 +8,9 @@ class Movie(models.Model):
     date = models.DateField()
     seats_available = models.PositiveIntegerField()
 
+    def __str__(self) -> str:
+        return f"<Movie: {self.name} :{self.date} {self.time}>"
+
 
 class Booking(models.Model):
     movie = models.ForeignKey(Movie, on_delete=models.CASCADE)
