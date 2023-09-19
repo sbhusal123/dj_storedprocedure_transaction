@@ -2,52 +2,84 @@
 CREATE OR REPLACE FUNCTION buy_movie_ticket(
     p_movie_id INT,
     p_customer_email VARCHAR,
+    p_seat_number VARCHAR,
     OUT result_message VARCHAR,
     OUT status_code INT
 ) AS
 $$
 DECLARE
-    v_movie_price DECIMAL;
     v_seats_available INT;
+    v_bookings_made INT;
+    v_lock_id BIGINT;
+    v_movie_seat_book_count INT;
 BEGIN
-    -- Initialize the result_message to an empty string
     result_message := '';
     status_code := 200;
 
-    -- Check if the movie exists and get its price and available seats
-    SELECT price, seats_available
-    INTO v_movie_price, v_seats_available
+    SELECT  COUNT(*) as movie_seat_booking_count
+    INTO v_movie_seat_book_count FROM ticket_booking
+    WHERE seat_number = p_seat_number AND movie_id = p_movie_id;
+
+    SELECT seats_available
+    INTO v_seats_available
     FROM ticket_movie
     WHERE id = p_movie_id;
 
-    -- Check if the movie exists
-    IF NOT FOUND THEN
-        result_message := 'Movie not found';
-        status_code := 500;
-    -- Check if there are available seats
-    ELSIF v_seats_available <= 0 THEN
-        result_message := 'No available seats for this movie';
-        status_code := 500;
-    ELSE
-        -- Try to book the ticket
-        INSERT INTO ticket_booking(movie_id, customer_email)
-        VALUES (p_movie_id, p_customer_email);
+    SELECT COUNT(*) AS booking_count
+    INTO v_bookings_made
+    FROM ticket_booking
+    WHERE movie_id = p_movie_id;
 
-        -- Check if the insertion was successful
-        IF FOUND THEN
-            -- Decrement available seats
-            UPDATE ticket_movie
-            SET seats_available = seats_available - 1
-            WHERE id = p_movie_id;
-            result_message := 'Ticket booked successfully';
-            status_code := 200;
-        ELSE
-            result_message := 'Failed to book the ticket';
+    v_lock_id = hashtext(p_movie_id || p_seat_number);
+
+    RAISE NOTICE 'bookings made for movie= %', v_bookings_made;
+    RAISE NOTICE 'seats available for movie= %', v_seats_available;
+    RAISE NOTICE 'lock id= %', v_lock_id;
+
+    -- check if id exists
+    IF NOT FOUND THEN
+        result_message := 'Movie with id not found';
+        status_code := 500;
+    -- if id exits
+    ELSE
+        -- if seat for movie is already booked
+        IF v_movie_seat_book_count = 1 THEN
+            result_message := 'Provided seat has already been booked.';
             status_code := 500;
+        ELSE
+            -- if seat row itself is not locked
+            IF NOT pg_try_advisory_lock(v_lock_id) THEN
+                result_message := 'Seat is locked.';
+                status_code := 500;
+
+            -- if not locked
+            ELSE
+                -- checks if number of bookings made exceeds
+                IF v_bookings_made = v_seats_available THEN
+                    result_message := 'No seats are available for provided movie id.';
+                    status_code := 200;
+                ELSE
+                    -- lock
+                    PERFORM pg_advisory_lock(v_lock_id);
+
+                    -- insert record
+                    INSERT INTO ticket_booking(movie_id, customer_email, seat_number)
+                        VALUES (p_movie_id, p_customer_email, p_seat_number);
+
+                    result_message := 'Seat booked successfully.';
+                    status_code := 200;
+
+                    -- unlock
+                    PERFORM pg_advisory_unlock(v_lock_id);
+                END IF;
+            END IF;
         END IF;
     END IF;
-END;
+END
 $$ LANGUAGE plpgsql;
 
--- calling a stored procedure
-select * from buy_movie_ticket(2, 'dmin@asd.asd')
+-- calling a function
+select  * from buy_movie_ticket(1, 'faker@domain.com', 'M25')
+
+-- SELECT pg_advisory_unlock_all();
+

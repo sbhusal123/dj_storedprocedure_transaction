@@ -15,3 +15,4 @@ class Movie(models.Model):
 class Booking(models.Model):
     movie = models.ForeignKey(Movie, on_delete=models.CASCADE)
     customer_email = models.EmailField()
+    seat_number = models.CharField()
